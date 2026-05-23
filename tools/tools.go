@@ -158,7 +158,7 @@ func toolError(err error) (*mcp.CallToolResult, any, error) {
 
 func requireAuth(api *client.Client) error {
 	if !api.HasAuth() {
-		return fmt.Errorf("not logged in — run once in a terminal: deltadaemon-mcp login")
+		return fmt.Errorf("not logged in — run once in a terminal: deltadaemon-mcp setup")
 	}
 	return nil
 }

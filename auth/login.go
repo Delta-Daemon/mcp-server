@@ -76,7 +76,7 @@ func CheckStatus(ctx context.Context) (*AccountStatus, error) {
 	if session != "" {
 		email, err := verifySession(ctx, apiBase, session)
 		if err != nil {
-			return st, fmt.Errorf("saved session expired; run: deltadaemon-mcp login")
+			return st, fmt.Errorf("saved session expired; run: deltadaemon-mcp setup")
 		}
 		st.Email = email
 		if os.Getenv("DELTADAEMON_API_KEY") == "" {
@@ -84,7 +84,7 @@ func CheckStatus(ctx context.Context) (*AccountStatus, error) {
 		}
 		return st, nil
 	}
-	return st, fmt.Errorf("not logged in; run: deltadaemon-mcp login")
+	return st, fmt.Errorf("not logged in; run: deltadaemon-mcp setup")
 }
 
 func loginWithPassword(ctx context.Context, apiBase, email, password string) (sessionID, userEmail string, err error) {
