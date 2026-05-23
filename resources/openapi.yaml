@@ -1,0 +1,982 @@
+openapi: 3.0.3
+info:
+  title: DeltaDaemon API
+  description: |
+    Programmatic access to historical NWS forecast accuracy data for US weather stations.
+    Quantify forecast bias, reliability, and error distributions by location, lead time, date range, and weather regime.
+
+    **Authentication:** Public endpoints (stations/metadata) require no auth. Data and accuracy endpoints require
+    either a session cookie (browser) or `Authorization: Bearer <API_KEY>`. 401 if unauthenticated; 402 if plan past_due or cancelled.
+  version: 1.0.0
+  contact:
+    url: https://deltadaemon.com
+
+servers:
+  - url: https://api.deltadaemon.com
+    description: Production
+  - url: http://localhost:8105
+    description: Local development
+
+tags:
+  - name: Public
+    description: No authentication required
+  - name: Public Data
+    description: Rate-limited, no auth (landing page)
+  - name: Auth
+    description: Signup, login, OAuth, session management
+  - name: API Keys
+    description: Create and manage API keys
+  - name: Billing
+    description: Checkout, subscription, webhooks
+  - name: Data
+    description: Raw forecast and observation data
+  - name: Accuracy
+    description: Forecast verification and accuracy metrics
+
+paths:
+  /api/v1/stations/metadata:
+    get:
+      tags: [Public]
+      summary: Station metadata
+      security: []
+      operationId: getStationMetadata
+      responses:
+        '200':
+          description: All tracked stations with coordinates, timezone, climate zone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/StationMetadata' }
+
+  /api/v1/public/accuracy/by-city:
+    get:
+      tags: [Public Data]
+      summary: Accuracy by city (public)
+      security: []
+      operationId: getCityAccuracyPublic
+      parameters: [{ $ref: '#/components/parameters/days' }, { $ref: '#/components/parameters/dateFrom' }, { $ref: '#/components/parameters/dateTo' }, { $ref: '#/components/parameters/stationId' }, { $ref: '#/components/parameters/city' }, { $ref: '#/components/parameters/minSamples' }, { $ref: '#/components/parameters/sortBy' }, { $ref: '#/components/parameters/format' }, { $ref: '#/components/parameters/accuracyMetric' }]
+      responses:
+        '200':
+          description: Accuracy stats by city
+
+  /api/v1/public/accuracy/by-station/{station_id}:
+    get:
+      tags: [Public Data]
+      summary: Accuracy by station (public)
+      security: []
+      operationId: getStationAccuracyPublic
+      parameters:
+        - $ref: '#/components/parameters/stationIdPath'
+        - { $ref: '#/components/parameters/days' }
+        - { name: include_raw, in: query, schema: { type: boolean, default: false } }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Detailed accuracy for one station
+
+  /api/v1/public/data/hourly-snapshot:
+    get:
+      tags: [Public Data]
+      summary: Hourly snapshot (public)
+      security: []
+      operationId: getHourlySnapshotPublic
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/city' }
+        - { name: reference_time, in: query, schema: { type: string, format: date-time }, description: "Anchor time (ISO8601; defaults to now)" }
+        - { name: lookback_hours, in: query, schema: { type: integer, default: 6 }, description: Hours before reference_time to search for a run }
+      responses:
+        '200':
+          description: Single NWS run hourly predictions + observations
+
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create account
+      security: []
+      operationId: postSignup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                display_name: { type: string }
+      responses:
+        '201':
+          description: Account created, session cookie set
+        '400':
+          description: Invalid request body
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      security: []
+      operationId: postLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Session cookie set
+        '401':
+          description: Invalid credentials
+
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request password reset
+      security: []
+      operationId: postForgotPassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: If email recognized, reset link sent
+
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password with token
+      security: []
+      operationId: postResetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: Password reset
+        '400':
+          description: Invalid or expired token
+
+  /auth/verify-email:
+    post:
+      tags: [Auth]
+      summary: Verify email with token
+      security: []
+      operationId: postVerifyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        '200':
+          description: Email verified, session created
+        '400':
+          description: Invalid or expired token
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out
+      security: []
+      operationId: postLogout
+      responses:
+        '200':
+          description: Session revoked
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      operationId: getMe
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Logged-in user
+        '401':
+          description: Not authenticated
+
+  /auth/usage:
+    get:
+      tags: [Auth]
+      summary: Usage stats
+      operationId: getUsage
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Usage for current period
+
+  /auth/oauth/{provider}:
+    get:
+      tags: [Auth]
+      summary: OAuth redirect
+      security: []
+      operationId: getOAuthRedirect
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string, enum: [google, github] }
+      responses:
+        '302':
+          description: Redirect to OAuth provider
+
+  /auth/oauth/{provider}/callback:
+    get:
+      tags: [Auth]
+      summary: OAuth callback
+      security: []
+      operationId: getOAuthCallback
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string, enum: [google, github] }
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+      responses:
+        '302':
+          description: Redirect to app or error
+
+  /api-keys:
+    get:
+      tags: [API Keys]
+      summary: List API keys
+      operationId: getApiKeys
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: List of API key metadata (prefix, name, created)
+    post:
+      tags: [API Keys]
+      summary: Create API key
+      operationId: postApiKey
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+      responses:
+        '201':
+          description: New API key (raw key returned once; store securely)
+
+  /api-keys/{id}:
+    delete:
+      tags: [API Keys]
+      summary: Revoke API key
+      operationId: deleteApiKey
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Key revoked
+        '404':
+          description: Key not found
+
+  /billing/create-checkout-session:
+    post:
+      tags: [Billing]
+      summary: Create Stripe checkout session
+      operationId: postCreateCheckoutSession
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan]
+              properties:
+                plan: { type: string }
+                billing_period: { type: string }
+      responses:
+        '200':
+          description: Checkout URL
+        '400':
+          description: Invalid plan
+
+  /billing/create-btcpay-invoice:
+    post:
+      tags: [Billing]
+      summary: Create BTCPay invoice
+      operationId: postCreateBTCPayInvoice
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan]
+              properties:
+                plan: { type: string }
+                months: { type: integer }
+      responses:
+        '200':
+          description: Invoice URL
+
+  /billing/subscription:
+    get:
+      tags: [Billing]
+      summary: Current subscription
+      operationId: getSubscription
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Subscription status (or free plan)
+
+  /billing/cancel-subscription:
+    post:
+      tags: [Billing]
+      summary: Cancel Stripe subscription at period end
+      description: Sets cancel_at_period_end on the Stripe subscription. Paid access continues until the current period ends, then the account moves to the Free plan.
+      operationId: postCancelSubscription
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Cancellation scheduled or already scheduled
+        '400':
+          description: No Stripe subscription or not cancellable
+        '502':
+          description: Stripe API error
+
+  /api/v1/data/forecast-actual:
+    get:
+      tags: [Data]
+      summary: Raw forecast-actual pairs
+      operationId: getForecastActual
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/city' }
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/dateFrom' }
+        - { $ref: '#/components/parameters/dateTo' }
+        - { name: limit, in: query, schema: { type: integer, default: 1000 } }
+        - { $ref: '#/components/parameters/format' }
+      responses:
+        '200':
+          description: Forecast vs actual pairs (JSON or CSV)
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/data/forecasts:
+    get:
+      tags: [Data]
+      summary: Forecast snapshots
+      operationId: getForecasts
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/city' }
+        - { name: forecast_for_date, in: query, required: true, schema: { type: string, format: date } }
+        - { name: limit, in: query, schema: { type: integer, default: 100 } }
+        - { $ref: '#/components/parameters/format' }
+      responses:
+        '200':
+          description: Forecast records for station and date
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/data/observations:
+    get:
+      tags: [Data]
+      summary: Raw observations
+      operationId: getObservations
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/city' }
+        - { $ref: '#/components/parameters/dateFrom' }
+        - { $ref: '#/components/parameters/dateTo' }
+        - { name: limit, in: query, schema: { type: integer, default: 1000 } }
+        - { $ref: '#/components/parameters/format' }
+      responses:
+        '200':
+          description: Station observations
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/data/hourly-comparison:
+    get:
+      tags: [Data]
+      summary: Hourly forecast vs observation pairs
+      operationId: getHourlyComparison
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/city' }
+        - { name: days, in: query, schema: { type: integer, default: 7 } }
+        - { name: lookback_hours, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Hourly comparison records
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/data/hourly-snapshot:
+    get:
+      tags: [Data]
+      summary: Single NWS run hourly snapshot
+      operationId: getHourlySnapshot
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/city' }
+        - { name: reference_time, in: query, schema: { type: string, format: date-time } }
+        - { name: lookback_hours, in: query, schema: { type: integer, default: 6 } }
+      responses:
+        '200':
+          description: One scraper run's hourly predictions + observations
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/data/run-stats:
+    get:
+      tags: [Data]
+      summary: Forecast run frequency stats per station
+      operationId: getForecastRunStats
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { name: start_time, in: query, schema: { type: string, format: date-time }, description: Filter runs to model_run >= start_time }
+        - { name: end_time, in: query, schema: { type: string, format: date-time }, description: Filter runs to model_run <= end_time }
+      responses:
+        '200':
+          description: Per-station stats (forecast_count, oldest_forecast, max/avg/median gap hours)
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/summary:
+    get:
+      tags: [Accuracy]
+      summary: Aggregate accuracy summary
+      operationId: getAccuracySummary
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/city' }
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/dateFrom' }
+        - { $ref: '#/components/parameters/dateTo' }
+        - { $ref: '#/components/parameters/format' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: MAE, bias, std dev, RMSE, sample count
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/by-date:
+    get:
+      tags: [Accuracy]
+      summary: Accuracy per calendar day
+      operationId: getAccuracyByDate
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/city' }
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/dateFrom' }
+        - { $ref: '#/components/parameters/dateTo' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Per-day accuracy stats
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/by-date/{station_id}:
+    get:
+      tags: [Accuracy]
+      summary: Accuracy per calendar day (by station)
+      operationId: getAccuracyByDateStation
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/stationIdPath'
+        - { $ref: '#/components/parameters/city' }
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/dateFrom' }
+        - { $ref: '#/components/parameters/dateTo' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Per-day accuracy stats
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/by-city:
+    get:
+      tags: [Accuracy]
+      summary: Accuracy by city
+      operationId: getCityAccuracy
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/city' }
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/dateFrom' }
+        - { $ref: '#/components/parameters/dateTo' }
+        - { $ref: '#/components/parameters/minSamples' }
+        - { $ref: '#/components/parameters/sortBy' }
+        - { $ref: '#/components/parameters/format' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Accuracy stats per city
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/by-lead-time:
+    get:
+      tags: [Accuracy]
+      summary: Accuracy by lead time bucket
+      operationId: getLeadTimeAccuracy
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/dateFrom' }
+        - { $ref: '#/components/parameters/dateTo' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: 0-6h, 6-12h, etc. buckets
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/by-station/{station_id}:
+    get:
+      tags: [Accuracy]
+      summary: Detailed accuracy for one station
+      operationId: getStationAccuracy
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/stationIdPath'
+        - { $ref: '#/components/parameters/days' }
+        - { name: include_raw, in: query, schema: { type: boolean, default: false } }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Station accuracy with optional raw samples
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/by-bucket/{station_id}:
+    get:
+      tags: [Accuracy]
+      summary: Accuracy by 2°F temperature bucket
+      operationId: getBucketAccuracy
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/stationIdPath'
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Categorical verification by temp range
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/by-weather-regime:
+    get:
+      tags: [Accuracy]
+      summary: Accuracy by weather regime
+      operationId: getWeatherRegimeAccuracy
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Accuracy by clear, cloudy, precipitation, etc.
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/bias-correction:
+    get:
+      tags: [Accuracy]
+      summary: Bias-corrected forecast
+      operationId: getBiasCorrection
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { name: forecast_temp, in: query, schema: { type: number, default: 75 } }
+        - { name: forecast_for_date, in: query, schema: { type: string, format: date } }
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Corrected forecast with expected range
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/peak-timing/{station_id}:
+    get:
+      tags: [Accuracy]
+      summary: Daily high or low timing distribution
+      operationId: getPeakTiming
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/stationIdPath'
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: When daily high or low typically occurs (metric=low uses low_observed_at)
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/exceedance:
+    get:
+      tags: [Accuracy]
+      summary: Exceedance rates by threshold
+      operationId: getExceedance
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { name: thresholds, in: query, schema: { type: string, default: "1,2,3,5" } }
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Fraction of forecasts above each °F threshold
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/exceedance-summary:
+    get:
+      tags: [Accuracy]
+      summary: Aggregate exceedance across all stations
+      operationId: getExceedanceSummary
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/days' }
+        - { name: thresholds, in: query, schema: { type: string, default: "2,3,5" } }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Avg miss rate (exceedance) per threshold across 20 stations
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/error-distribution:
+    get:
+      tags: [Accuracy]
+      summary: Histogram of absolute error (0-1, 1-2, 2-3°F buckets)
+      operationId: getErrorDistribution
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Bucket counts and percentages (e.g. KLAX 90-day distribution)
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/revision-stats:
+    get:
+      tags: [Accuracy]
+      summary: Per-station revisions per day and miss rate
+      operationId: getRevisionStats
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Revisions per day and miss rate (% wrong by >2°F) per station
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/sample-size:
+    get:
+      tags: [Accuracy]
+      summary: Sample counts by station
+      operationId: getSampleSize
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/minSamples' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Forecast-actual pair counts per station
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/freshness:
+    get:
+      tags: [Accuracy]
+      summary: Data freshness (last 24h)
+      operationId: getDataFreshness
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      responses:
+        '200':
+          description: Records last 24h, minutes since latest
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/update-frequency:
+    get:
+      tags: [Accuracy]
+      summary: Update frequency stats
+      operationId: getUpdateFrequency
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Records per day/hour
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+  /api/v1/accuracy/hit-rate:
+    get:
+      tags: [Accuracy]
+      summary: Forecast hit rate (exact, +/-1F, +/-2F)
+      operationId: getHitRate
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/stationId' }
+        - { $ref: '#/components/parameters/city' }
+        - { $ref: '#/components/parameters/days' }
+        - { $ref: '#/components/parameters/accuracyMetric' }
+      responses:
+        '200':
+          description: Hit rate stats for selected window
+        '401':
+          description: Unauthorized
+        '402':
+          description: Payment required
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API-Key
+      description: API key from https://deltadaemon.com/signin
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: dd_session
+      description: Browser session cookie (set by /auth/login)
+
+  parameters:
+    stationId:
+      name: station_id
+      in: query
+      schema: { type: string }
+      description: ICAO station ID (e.g. KLAX)
+    stationIdPath:
+      name: station_id
+      in: path
+      required: true
+      schema: { type: string }
+      description: ICAO station ID (e.g. KLAX)
+    city:
+      name: city
+      in: query
+      schema: { type: string }
+      description: City name (resolves to station)
+    days:
+      name: days
+      in: query
+      schema: { type: integer, default: 90 }
+      description: Rolling window in days (max 365)
+    dateFrom:
+      name: date_from
+      in: query
+      schema: { type: string, format: date }
+      description: Window start (YYYY-MM-DD)
+    dateTo:
+      name: date_to
+      in: query
+      schema: { type: string, format: date }
+      description: Window end (YYYY-MM-DD)
+    minSamples:
+      name: min_samples
+      in: query
+      schema: { type: integer, default: 0 }
+      description: Exclude stations with fewer samples
+    sortBy:
+      name: sort_by
+      in: query
+      schema: { type: string, enum: [mae, count, mean_error, city, rmse] }
+    format:
+      name: format
+      in: query
+      schema: { type: string, enum: [json, csv], default: json }
+    accuracyMetric:
+      name: metric
+      in: query
+      schema: { type: string, enum: [high, low], default: high }
+      description: Daily high (default) vs daily low verification (forecast vs observed/settled low)
+
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data: {}
+        metadata:
+          type: object
+          properties:
+            generated_at: { type: string, format: date-time }
+            local_generated_at: { type: string }
+            period_start: { type: string, format: date }
+            period_end: { type: string, format: date }
+            days_analyzed: { type: integer }
+            total_records: { type: integer }
+            data_freshness: { type: string }
+            query_time_ms: { type: integer }
+            endpoint: { type: string }
+            station_id: { type: string }
+            station_timezone: { type: string }
+            forecast_for_date: { type: string, format: date }
+            lookback_hours: { type: integer }
+            accuracy_metric: { type: string, enum: [high, low] }
+            forecast_coverage_pct: { type: number }
+            error_convention: { type: string }
+            verification_coverage:
+              $ref: '#/components/schemas/VerificationCoverage'
+
+    VerificationCoverage:
+      type: object
+      properties:
+        verified_days: { type: integer }
+        preliminary_days: { type: integer }
+        verified_pct: { type: number }
+
+    AccuracySummary:
+      type: object
+      description: |
+        Verification stats for a forecast/actual sample. Numeric stat fields are
+        nullable: when there are zero verified pairs (or the underlying SQL
+        aggregate is NULL) the field is `null`/omitted rather than `0`, so
+        consumers can distinguish "no data" from a true zero error.
+      properties:
+        verification_pairs: { type: integer }
+        unique_days: { type: integer }
+        mean_error: { type: number, nullable: true, description: "Bias (°F)" }
+        std_dev: { type: number, nullable: true }
+        mae: { type: number, nullable: true, description: "Mean absolute error (°F)" }
+        rmse: { type: number, nullable: true, description: "Root mean squared error (°F)" }
+        abs_error_p50: { type: number, nullable: true }
+        abs_error_p90: { type: number, nullable: true }
+        abs_error_p95: { type: number, nullable: true }
+
+    ErrorResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        error:
+          type: object
+          properties:
+            code: { type: string, description: Stable machine-readable code (SCREAMING_SNAKE) }
+            message: { type: string, description: Human-readable message }
+        metadata:
+          type: object
+          properties:
+            generated_at: { type: string, format: date-time }
+            endpoint: { type: string }
+
+    StationMetadata:
+      type: object
+      properties:
+        station_id: { type: string }
+        city_name: { type: string }
+        country: { type: string }
+        latitude: { type: number }
+        longitude: { type: number }
+        timezone: { type: string }
+        climate_zone: { type: string }
+        data_active: { type: boolean }
+        aliases: { type: array, items: { type: string } }
+        external_ids:
+          type: object
+          properties:
+            icao: { type: string }
+            iata: { type: string }
