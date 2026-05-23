@@ -24,6 +24,8 @@ func RunCLI(args []string) int {
 		return runLogout()
 	case "status":
 		return runStatus()
+	case "setup":
+		return RunSetup(args[1:])
 	case "help", "-h", "--help":
 		printUsage()
 		return 0
@@ -39,7 +41,8 @@ func printUsage() {
 
 Usage:
   deltadaemon-mcp [serve]     Run MCP server (stdio)
-  deltadaemon-mcp login       Sign in (email/password or --api-key)
+  deltadaemon-mcp setup       Sign in and print MCP config for Cursor / Claude
+  deltadaemon-mcp login       Sign in with Google or GitHub (browser)
   deltadaemon-mcp logout      Remove saved credentials
   deltadaemon-mcp status      Show login state
 
@@ -53,7 +56,6 @@ Environment (optional):
 }
 
 func runServe() int {
-	// imported from main via callback to avoid circular imports
 	return serveMCP()
 }
 
@@ -66,13 +68,16 @@ func SetServeHandler(fn func() int) {
 func runLogin(args []string) int {
 	fs := flag.NewFlagSet("login", flag.ExitOnError)
 	apiBase := fs.String("api-base", "", "API base URL (default https://api.deltadaemon.com/api/v1)")
-	useAPIKey := fs.Bool("api-key", false, "paste an API key instead of email/password")
+	provider := fs.String("provider", "google", "OAuth provider: google or github")
+	usePassword := fs.Bool("password", false, "sign in with email and password instead of OAuth")
+	useAPIKey := fs.Bool("api-key", false, "paste an API key instead of OAuth")
+	noBrowser := fs.Bool("no-browser", false, "print sign-in URL instead of opening a browser")
 	_ = fs.Parse(args)
 
-	opts := LoginOptions{APIBase: *apiBase}
 	ctx := context.Background()
 
 	if *useAPIKey {
+		opts := LoginOptions{APIBase: *apiBase}
 		key := strings.TrimSpace(os.Getenv("DELTADAEMON_API_KEY"))
 		if key == "" {
 			var err error
@@ -83,7 +88,12 @@ func runLogin(args []string) int {
 			}
 		}
 		opts.APIKey = key
-	} else {
+		if err := Login(ctx, opts); err != nil {
+			fmt.Fprintf(os.Stderr, "login failed: %v\n", err)
+			return 1
+		}
+	} else if *usePassword {
+		opts := LoginOptions{APIBase: *apiBase}
 		email, err := readLine("Email: ")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "read email: %v\n", err)
@@ -96,14 +106,24 @@ func runLogin(args []string) int {
 		}
 		opts.Email = email
 		opts.Password = password
+		if err := Login(ctx, opts); err != nil {
+			fmt.Fprintf(os.Stderr, "login failed: %v\n", err)
+			return 1
+		}
+	} else {
+		if err := LoginWithBrowser(ctx, BrowserLoginOptions{
+			APIBase:   *apiBase,
+			Provider:  *provider,
+			NoBrowser: *noBrowser,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "login failed: %v\n", err)
+			return 1
+		}
 	}
 
-	if err := Login(ctx, opts); err != nil {
-		fmt.Fprintf(os.Stderr, "login failed: %v\n", err)
-		return 1
-	}
 	path, _ := ConfigPath()
 	fmt.Fprintf(os.Stderr, "Logged in. Credentials saved to %s\n", path)
+	fmt.Fprintln(os.Stderr, "Run: deltadaemon-mcp setup   (print MCP config for your editor)")
 	return 0
 }
 

@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binaries
+        run: |
+          BINARY=deltadaemon-mcp
+          VERSION=${GITHUB_REF_NAME}
+          mkdir -p dist
+
+          for OS in darwin linux; do
+            for ARCH in amd64 arm64; do
+              OUT="dist/${BINARY}_${OS}_${ARCH}"
+              GOOS=$OS GOARCH=$ARCH go build \
+                -ldflags "-X main.version=${VERSION}" \
+                -o "$OUT" .
+              tar -C dist -czf "${OUT}.tar.gz" "${BINARY}_${OS}_${ARCH}"
+              rm "$OUT"
+            done
+          done
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true

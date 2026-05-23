@@ -264,6 +264,30 @@ paths:
         '302':
           description: Redirect to app or error
 
+  /auth/mcp/login:
+    get:
+      tags: [Auth]
+      summary: MCP CLI OAuth (browser sign-in with localhost callback)
+      security: []
+      operationId: getMCPLogin
+      parameters:
+        - name: provider
+          in: query
+          schema: { type: string, enum: [google, github], default: google }
+        - name: redirect_uri
+          in: query
+          required: true
+          schema: { type: string, format: uri, example: "http://127.0.0.1:8765/callback" }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '302':
+          description: Redirect to OAuth provider
+        '400':
+          description: Invalid redirect_uri or missing parameters
+
   /api-keys:
     get:
       tags: [API Keys]

@@ -2,59 +2,84 @@
 
 Go [Model Context Protocol](https://modelcontextprotocol.io) server that exposes DeltaDaemon forecast-accuracy data to **Cursor**, **Claude Desktop**, and other MCP clients.
 
-## Setup (one time)
+## Quick start
 
-Sign in once from a terminal. Credentials are saved to `~/.config/deltadaemon/credentials.json` (file mode `0600`) — **not** in your MCP config.
+```bash
+curl -fsSL https://raw.githubusercontent.com/Delta-Daemon/mcp-server/main/scripts/install.sh | sh
+deltadaemon-mcp setup
+```
+
+`setup` opens your browser for Google sign-in (or GitHub with `--provider github`), saves credentials locally, and prints the MCP config snippet for your editor.
+
+No secrets go in your MCP config — only the binary path.
+
+## Install options
+
+**Install script** (recommended):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Delta-Daemon/mcp-server/main/scripts/install.sh | sh
+```
+
+The script tries a GitHub release binary first, then `go install`.
+
+**Go install:**
+
+```bash
+go install github.com/Delta-Daemon/mcp-server@latest
+```
+
+**Build from source:**
 
 ```bash
 git clone git@github.com:Delta-Daemon/mcp-server.git
 cd mcp-server
 go build -o deltadaemon-mcp .
-./deltadaemon-mcp login
-```
-
-Use your [DeltaDaemon account](https://deltadaemon.com/signin) email and password. Prefer an API key instead?
-
-```bash
-./deltadaemon-mcp login --api-key
-# or non-interactive:
-DELTADAEMON_API_KEY=dd_live_... ./deltadaemon-mcp login --api-key
-```
-
-Check login state:
-
-```bash
-./deltadaemon-mcp status
-./deltadaemon-mcp logout   # remove saved credentials
+./deltadaemon-mcp setup
 ```
 
 ## Cursor / Claude MCP config
 
-No secrets in the config — only the command path:
+After `setup`, paste the printed JSON into your MCP config:
+
+| Editor | Config file |
+|--------|-------------|
+| Cursor | `~/.cursor/mcp.json` |
+| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+
+Example:
 
 ```json
 {
   "mcpServers": {
     "deltadaemon": {
-      "command": "/absolute/path/to/mcp-server/deltadaemon-mcp"
+      "command": "/Users/you/.local/bin/deltadaemon-mcp"
     }
   }
 }
 ```
 
-Run `./deltadaemon-mcp login` before first use. The MCP server reads saved credentials automatically.
+Restart your editor after saving the config.
 
-## How auth works
+## Authentication
 
-| Method | When |
-|--------|------|
-| **Saved session** (default) | `deltadaemon-mcp login` with email/password |
-| **Saved API key** | `deltadaemon-mcp login --api-key` |
-| **Environment override** | `DELTADAEMON_API_KEY` for CI/scripts only |
+| Method | Command |
+|--------|---------|
+| **Browser OAuth** (default) | `deltadaemon-mcp login` |
+| **GitHub OAuth** | `deltadaemon-mcp login --provider github` |
+| **API key** | `deltadaemon-mcp login --api-key` |
+| **Email/password** | `deltadaemon-mcp login --password` |
+
+Credentials are saved to `~/.config/deltadaemon/credentials.json` (mode `0600`).
+
+Check login state:
+
+```bash
+deltadaemon-mcp status
+deltadaemon-mcp logout
+```
 
 Priority: `DELTADAEMON_API_KEY` env → saved API key → saved session cookie.
-
-The DeltaDaemon API accepts either a Bearer API key or a browser-style `dd_session` cookie; the MCP server uses whichever you saved.
 
 ## Optional environment
 
@@ -68,7 +93,8 @@ The DeltaDaemon API accepts either a Bearer API key or a browser-style `dd_sessi
 | Command | Description |
 |---------|-------------|
 | `deltadaemon-mcp` or `serve` | Run MCP server over stdio |
-| `login` | Save credentials interactively |
+| `setup` | Sign in + print MCP config |
+| `login` | Sign in with Google/GitHub OAuth |
 | `logout` | Delete saved credentials |
 | `status` | Verify login and show config path |
 
@@ -110,6 +136,10 @@ Common query params: `station_id`, `city`, `days`, `date_from`, `date_to`, `metr
 ## Local API
 
 ```bash
-./deltadaemon-mcp login --api-base http://localhost:8105/api/v1
-./deltadaemon-mcp serve
+deltadaemon-mcp login --api-base http://localhost:8105/api/v1
+deltadaemon-mcp serve
 ```
+
+The API must expose `GET /auth/mcp/login` for browser OAuth (included in delta-daemon-api).
+
+> **Note:** Browser OAuth requires the Deltadaemon API to be deployed with the MCP auth changes (`handlers/auth_mcp.go`, updated `handlers/auth_oauth.go`, route in `main.go`). Until that's deployed to production, use `--api-key` or `--password` as fallbacks.
